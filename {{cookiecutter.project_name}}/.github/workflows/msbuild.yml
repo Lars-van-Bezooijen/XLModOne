@@ -1,0 +1,96 @@
+name: Build, Test, and Analyze
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**/cookiecutter.json'
+  pull_request:
+    branches: [ main ]
+
+env:
+  # Path to the solution file relative to the root of the project.
+  SOLUTION_FILE_PATH: .
+
+  # Configuration type to build.
+  # You can convert this to a build matrix if you need coverage of multiple configuration types.
+  # https://docs.github.com/actions/learn-github-actions/managing-complex-workflows#using-a-build-matrix
+  BUILD_CONFIGURATION: Release
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
+        
+    - name: Setup .NET Core SDK
+      uses: actions/setup-dotnet@v1.8.2
+      with:
+        dotnet-version: 5.0.x
+        
+    - name: Add MSBuild to PATH
+      uses: microsoft/setup-msbuild@v1
+      
+    - name: Set up JDK 11
+      uses: actions/setup-java@v1
+      with:
+        java-version: 1.11
+        
+    - name: Cache SonarCloud packages
+      uses: actions/cache@v1
+      with:
+        path: ~\sonar\cache
+        key: {% raw %}${{ runner.os }}-sonar{% endraw %}
+        restore-keys: {% raw %}${{ runner.os }}-sonar{% endraw %}
+        
+    - name: Cache SonarCloud scanner
+      id: cache-sonar-scanner
+      uses: actions/cache@v1
+      with:
+        path: .\.sonar\scanner
+        key: {% raw %}${{ runner.os }}-sonar-scanner{% endraw %}
+        restore-keys: {% raw %}${{ runner.os }}-sonar-scanner{% endraw %}
+        
+    - name: Install SonarCloud scanner
+      if: steps.cache-sonar-scanner.outputs.cache-hit != 'true'
+      shell: powershell
+      run: |
+        New-Item -Path .\.sonar\scanner -ItemType Directory
+        dotnet tool update dotnet-sonarscanner --tool-path .\.sonar\scanner
+
+    - name: Restore NuGet packages
+      working-directory: {% raw %}${{env.GITHUB_WORKSPACE}}{% endraw %}
+      run: nuget restore {% raw %}${{env.SOLUTION_FILE_PATH}}{% endraw %}
+      
+    #- name: Start SonarCloud Analysis
+    #  env:
+    #    GITHUB_TOKEN: {% raw %}${{ secrets.GITHUB_TOKEN }}{% endraw %}  # Needed to get PR information, if any
+    #    SONAR_TOKEN: {% raw %}${{ secrets.SONAR_TOKEN }}{% endraw %}
+    #  run: .\.sonar\scanner\dotnet-sonarscanner begin /k:"{% raw %}${{ github.repository_owner }}{% endraw %}_{{cookiecutter.project_name}}" /o:"{{cookiecutter.project_name}}" /d:sonar.login="{% raw %}${{ secrets.SONAR_TOKEN }}{% endraw %}" /d:sonar.host.url="https://sonarcloud.io" /d:sonar.cs.vstest.reportsPaths="**/*.trx" /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml"
+        
+    - name: MSBuild
+      working-directory: {% raw %}${{env.GITHUB_WORKSPACE}}{% endraw %}
+      shell: powershell
+      run: |
+        msbuild /m /p:Configuration={% raw %}${{env.BUILD_CONFIGURATION}} ${{env.SOLUTION_FILE_PATH}}{% endraw %}
+        
+    #- name: Stop SonarScanner Analysis
+    #  env:
+    #    GITHUB_TOKEN: {% raw %}${{ secrets.GITHUB_TOKEN }}{% endraw %}  # Needed to get PR information, if any
+    #    SONAR_TOKEN: {% raw %}${{ secrets.SONAR_TOKEN }}{% endraw %}
+    #  run: .\.sonar\scanner\dotnet-sonarscanner end /d:sonar.login="{% raw %}${{ secrets.SONAR_TOKEN }}{% endraw %}"
+
+    - name: Prepare Files for Zip
+      run: |
+        New-Item -Path "{{cookiecutter.project_name}}\bin\Release\" -name "{{cookiecutter.project_name}}" -ItemType "directory"
+        Copy-Item "{{cookiecutter.project_name}}\bin\Release\{{cookiecutter.project_name}}.dll" -Destination "{{cookiecutter.project_name}}\bin\Release\{{cookiecutter.project_name}}\{{cookiecutter.project_name}}.dll"
+        Copy-Item "{{cookiecutter.project_name}}\bin\Release\Info.json" "{{cookiecutter.project_name}}\bin\Release\{{cookiecutter.project_name}}\Info.json"
+
+    - name: Upload {{cookiecutter.project_name}} zip
+      uses: actions/upload-artifact@v3.0.0
+      with:
+        name: {{cookiecutter.project_name}}
+        path: {{cookiecutter.project_name}}/bin/Release/{{cookiecutter.project_name}}/
